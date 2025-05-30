@@ -703,27 +703,27 @@ def module_temp_populate(arg_list, _dummy):
         temperature_fault = "0"
         temperature_trip_crit = "0"
         temperature_crit = "0"
-        cooling_level_input = None
-        max_cooling_level_input = None
+        tec_cooling_level_input = None
+        tec_cooling_level_warning = None
 
         if module_present:
             f_src_input = os.path.join(f_src_path, "temperature/input")
             f_src_crit = os.path.join(f_src_path, "temperature/threshold_hi")
             f_src_hcrit = os.path.join(f_src_path, "temperature/threshold_critical_hi")
-            f_src_cooling_level_input = os.path.join(f_src_path, "temperature/tec/cooling_level")
-            f_src_max_cooling_level_input = os.path.join(f_src_path, "temperature/tec/max_cooling_level")
+            f_src_tec_cooling_level_input = os.path.join(f_src_path, "temperature/tec/cooling_level")
+            f_src_tec_cooling_level_warning = os.path.join(f_src_path, "temperature/tec/warning_cooling_level")
 
-            if os.path.isfile(f_src_cooling_level_input):
+            if os.path.isfile(f_src_tec_cooling_level_input):
                 try:
-                    with open(f_src_cooling_level_input, 'r') as f:
-                        cooling_level_input = f.read()
+                    with open(f_src_tec_cooling_level_input, 'r') as f:
+                        tec_cooling_level_input = f.read()
                 except BaseException:
                     pass
 
-            if os.path.isfile(f_src_max_cooling_level_input):
+            if os.path.isfile(f_src_tec_cooling_level_warning):
                 try:
-                    with open(f_src_max_cooling_level_input, 'r') as f:
-                        max_cooling_level_input = f.read()
+                    with open(f_src_tec_cooling_level_warning, 'r') as f:
+                        tec_cooling_level_warning = f.read()
                 except BaseException:
                     pass
 
@@ -759,8 +759,8 @@ def module_temp_populate(arg_list, _dummy):
             "_temp_emergency": temperature_emergency,
             "_temp_fault": temperature_fault,
             "_temp_trip_crit": temperature_trip_crit,
-            "_cooling_level_input": cooling_level_input,
-            "_max_cooling_level_input": max_cooling_level_input,
+            "_tec_cooling_level_input": tec_cooling_level_input,
+            "_tec_cooling_level_warning": tec_cooling_level_warning,
             "_status": module_present
         }
 
