@@ -50,7 +50,7 @@ def current_milli_time():
         get current time in milliseconds
     @return: int value time in milliseconds
     """
-    return round(time.clock_gettime(1) * 1000)
+    return round(time.clock_gettime(time.CLOCK_MONOTONIC) * 1000)
 
 
 class SyslogFilter(logging.Filter):
@@ -63,7 +63,7 @@ class SyslogFilter(logging.Filter):
         return res
 
 
-class tc_logger(object):
+class TCLogger(object):
     """
     Logger class provide functionality to log messages.
     It can log to several places in parallel
@@ -83,8 +83,24 @@ class tc_logger(object):
 
     ERROR   For serious issues that caused part of the system to fail.
     """
+    CRITICAL = logging.CRITICAL
+    FATAL = CRITICAL
+    ERROR = logging.ERROR
+    NOTICE = logging.INFO + 5
+    WARNING = logging.WARNING
+    WARN = WARNING
+    INFO = logging.INFO
+    DEBUG = logging.DEBUG
+    NOTSET = logging.NOTSET
 
-    def __init__(self, use_syslog=False, log_file=None, verbosity=20):
+    MAX_LOG_FILE_SIZE = 10 * 1024 * 1024
+    MAX_LOG_FILE_BACKUP_COUNT = 3
+
+    MAX_MSG_HASH_SIZE = 100
+    MAX_MSG_TIMEOUT_HASH_SIZE = 50
+    MSG_HASH_TIMEOUT = 60 * 60 * 1000
+
+    def __init__(self, use_syslog=False, log_file=None, tc_log_level=INFO, syslog_level=NOTICE):
         """
         @summary:
             The following class provide functionality to log messages.
@@ -92,36 +108,36 @@ class tc_logger(object):
             value 1-enable/0-disable
         @param log_file: log to user specified file. Set '' if no log needed
         """
-        logging.basicConfig(level=logging.DEBUG)
-        logging.addLevelName(logging.INFO + 5, "NOTICE")
+        logging.basicConfig(level=self.DEBUG)
+        logging.addLevelName(self.NOTICE, "NOTICE")
         SysLogHandler.priority_map["NOTICE"] = "notice"
 
         self.logger = logging.getLogger("main")
-        self.logger.setLevel(logging.DEBUG)
+        self.logger.setLevel(self.DEBUG)
         self.logger.propagate = False
         self.logger_fh = None
         self.logger_emit = True
         self.syslog_hash = {}    # hash array of the messages which was logged to syslog
 
-        self.set_param(use_syslog, log_file, verbosity)
+        self.set_param(use_syslog, log_file, tc_log_level, syslog_level)
         for level in ("debug", "info", "notice", "warn", "error", "critical"):
             setattr(self, level, self._make_log_level(level))
 
     def _make_log_level(self, level):
         level_map = {
-            "debug": logging.DEBUG,
-            "info": logging.INFO,
-            "notice": logging.INFO + 5,
-            "warn": logging.WARNING,
-            "error": logging.ERROR,
-            "critical": logging.CRITICAL,
+            "debug": self.DEBUG,
+            "info": self.INFO,
+            "notice": self.NOTICE,
+            "warn": self.WARNING,
+            "error": self.ERROR,
+            "critical": self.CRITICAL,
         }
 
         def log_method(msg, id=None, repeat=0):
             self.log_handler(level_map[level], msg, id, repeat)
         return log_method
 
-    def set_param(self, use_syslog=None, log_file=None, verbosity=20):
+    def set_param(self, use_syslog=None, log_file=None, tc_log_level=INFO, syslog_level=NOTICE):
         """
         @summary:
             Set logger parameters. Can be called any time
@@ -130,16 +146,26 @@ class tc_logger(object):
             value 1-enable/0-disable
         @param log_file: log to user specified file. Set None if no log needed
         """
+        if log_file and not isinstance(log_file, str):
+            raise ValueError("log_file must be a string")
+        
+        if log_file and log_file not in ["stdout", "stderr"]:
+            log_dir = os.path.dirname(log_file)
+            if log_dir and not os.access(log_dir, os.W_OK):
+                raise PermissionError(f"Cannot write to log directory: {log_dir}")
+
         formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 
         if log_file:
             if any(std_file in log_file for std_file in ["stdout", "stderr"]):
                 self.logger_fh = logging.StreamHandler()
             else:
-                self.logger_fh = RotatingFileHandler(log_file, maxBytes=(10 * 1024) * 1024, backupCount=3)
+                self.logger_fh = RotatingFileHandler(log_file,
+                                                     maxBytes=self.MAX_LOG_FILE_SIZE,
+                                                     backupCount=self.MAX_LOG_FILE_BACKUP_COUNT)
 
             self.logger_fh.setFormatter(formatter)
-            self.logger_fh.setLevel(verbosity)
+            self.logger_fh.setLevel(tc_log_level)
             self.logger.addHandler(self.logger_fh)
 
         if use_syslog:
@@ -153,7 +179,7 @@ class tc_logger(object):
             facility = SysLogHandler.LOG_SYSLOG
             try:
                 syslog_handler = SysLogHandler(address=address, facility=facility)
-                syslog_handler.setLevel(logging.INFO)
+                syslog_handler.setLevel(syslog_level)
 
                 syslog_handler.setFormatter(logging.Formatter("hw-management-tc: %(levelname)s - %(message)s"))
                 syslog_handler.addFilter(SyslogFilter("syslog"))
@@ -164,7 +190,7 @@ class tc_logger(object):
     def stop(self):
         """
         @summary:
-            Cleanup and Stop logger
+            Cleanup and stop logger
         """
         logging.shutdown()
         handler_list = self.logger.handlers[:]
@@ -203,13 +229,13 @@ class tc_logger(object):
         @param repeat:  Maximum number of times to log repeated messages to syslog before collapsing.
         """
         # ERROR, WARNING, INFO, NOTICE can be pushed to syslog (optionally)
-        if level in [logging.ERROR, logging.WARNING, logging.INFO, logging.INFO + 5]:
+        if level in [self.ERROR, self.WARNING, self.INFO, self.NOTICE]:
             msg, syslog_emit = self.push_syslog(msg, id, repeat)
         # DEBUG can't be pushed to syslog
-        elif level == logging.DEBUG:
+        elif level == self.DEBUG:
             syslog_emit = False
         # CRITICAL always push to syslog
-        elif level == logging.CRITICAL:
+        elif level == self.CRITICAL:
             syslog_emit = True
         else:
             raise ValueError(f"Invalid log level: {level}")
@@ -223,6 +249,7 @@ class tc_logger(object):
             try:
                 self.logger.log(level, msg_prefix + msg)
             except (IOError, OSError, ValueError) as e:
+                print ("Error logging message: {} {}".format(msg, e))
                 pass
             finally:
                 self.logger_emit = True
@@ -234,19 +261,25 @@ class tc_logger(object):
         """
         hash_size = len(self.syslog_hash)
         self.logger.info("syslog_hash_garbage_collect: hash_size={}".format(hash_size))
-        if hash_size > 100:
+
+        if hash_size > self.MAX_MSG_HASH_SIZE:
             # some major issue. We never expect to have more than 100 messages in hash.
-            self.logger.error("syslog_hash_garbage_collect: to much ({}) messages in hash. Remove all messages.".format(hash_size))
+            self.logger.error("syslog_hash_garbage_collect: too many ({}) messages in hash. Remove all messages.".format(hash_size))
             self.syslog_hash = {}
             return
 
-        if hash_size > 50:
-            # some messages was not cleaned up.
+        if hash_size > self.MAX_MSG_TIMEOUT_HASH_SIZE:
+            # some messages were not cleaned up.
             # remove messages older than 60 minutes
-            for id_hash in self.syslog_hash:
-                if self.syslog_hash[id_hash]["ts"] < current_milli_time() - 60 * 60 * 1000:
-                    self.logger.warning("syslog_hash_garbage_collect: remove message \"{}\" from hash".format(self.syslog_hash[id_hash]["msg"]))
-                    del self.syslog_hash[id_hash]
+            current_time = current_milli_time()
+            expired_keys = [
+                key for key, value in self.syslog_hash.items()
+                if value["ts"] < current_time - self.MSG_HASH_TIMEOUT
+            ]
+
+            for key in expired_keys:
+                self.logger.warning("syslog_hash_garbage_collect: remove message \"{}\" from hash".format(self.syslog_hash[key]["msg"]))
+                del self.syslog_hash[key]
 
     def push_syslog(self, msg="", id=None, repeat=0):
         """
@@ -254,12 +287,12 @@ class tc_logger(object):
         @param id: id used as key for message that should be "collapsed" into start/stop messages
         @param repeat: max count of the message to display in syslog
         @summary:
-                if repeat > 0 then message will be logged to syslog "repeat" times.
-                if id == None just print syslog (no start-stop markers)
-                if id != None then save to hash, message for log start/stop event
-            if repeat is 0 stop syslog emmit
-                if id == None stop syslog emmit
-                if id != None syslog emmit log with "clear" marker
+            if repeat > 0 then message will be logged to syslog "repeat" times.
+            if id == None just print syslog (no start-stop markers)
+            if id != None then save to hash, message for log start/stop event
+            if repeat is 0 stop syslog emit
+            if id == None stop syslog emit
+            if id != None syslog emit log with "clear" marker
         @return: message to log, syslog_emit flag
         """
 
@@ -301,8 +334,8 @@ class tc_logger(object):
 
 class RepeatedTimer(object):
     """
-     @summary:
-         Provide repeat timer service. Can start provided function with selected  interval
+    @summary:
+        Provide repeat timer service. Can start provided function with selected  interval
     """
 
     def __init__(self, interval, function):
@@ -346,7 +379,7 @@ class RepeatedTimer(object):
     def stop(self):
         """
         @summary:
-            Stop selected timer (if it started before
+            Stop selected timer (if it started before)
         """
         self._timer.cancel()
         self.is_running = False
