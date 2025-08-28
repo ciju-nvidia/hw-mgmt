@@ -62,7 +62,7 @@ import traceback
 import argparse
 import subprocess
 import signal
-from hw_management_lib import TCLogger as Logger
+from hw_management_lib import HW_Mgmt_Logger as Logger
 from hw_management_lib import RepeatedTimer as RepeatedTimer
 from hw_management_lib import str2bool, current_milli_time
 import json
@@ -86,6 +86,8 @@ class CONST(object):
     """
     @summary: hw-management constants
     """
+    # syslog identifier
+    SYSLOG_IDENTIFIER = 'hw-management-tc'
 
     # string aliases for constants
     LOG_USE_SYSLOG = "use_syslog"
@@ -750,7 +752,7 @@ class hw_management_file_op(object):
                 subprocess.call(mlxreg_set_cmd, shell=True)
             else:
                 ret = False
-         except (ValueError, IOError, OSError):
+        except (ValueError, IOError, OSError):
             self.log.debug("Failed to write PWM via mlxreg {}".format(pwm))
             ret = False
 
@@ -3304,10 +3306,10 @@ class ThermalManagement(hw_management_file_op):
                 self.log.notice(None, id="Read PWM error")
 
             if abs(pwm_real - self.pwm) > 1:
-                self.log.warn("Unexpected pwm value {}. Force set to {}".format(pwm_real, self.pwm), id="Unexpected pwm value", repeat=1)
+                self.log.warn("Unexpected pwm value {}. Force set to {}".format(pwm_real, self.pwm), id="Unexpected pwm value1", repeat=1)
                 self._update_chassis_fan_speed(self.pwm, True)
             else:
-                self.log.notice(None, id="Unexpected pwm value")
+                self.log.notice(None, id="Unexpected pwm value1")
 
     # ----------------------------------------------------------------------
     def _pwm_worker(self):
@@ -3321,7 +3323,7 @@ class ThermalManagement(hw_management_file_op):
                 self.log.notice(None, id="Read PWM error")
 
             if abs(pwm_real - self.pwm) > 1:
-                self.log.warn("Unexpected pwm1 value {}. Force set to {}".format(pwm_real, self.pwm), id="Unexpected pwm value", repeat=1)
+                self.log.warn("Unexpected pwm1 value {}. Force set to {}".format(pwm_real, self.pwm), id="Unexpected pwm value2", repeat=1)
                 self._update_chassis_fan_speed(self.pwm, True)
             else:
                 self.log.notice(None, id="Unexpected pwm value")
@@ -3533,7 +3535,7 @@ class ThermalManagement(hw_management_file_op):
         """
         if sig in [signal.SIGTERM, signal.SIGINT, signal.SIGHUP]:
             self.exit_flag = True
-            self.log.close_tc_log_handler()
+            self.log.close_log_handler()
             if self.sys_config.get("platform_support", 1):
                 self.stop(reason="SIG {}".format(sig))
 
@@ -4198,7 +4200,7 @@ if __name__ == '__main__':
                             help="Define custom hw-management root folder",
                             default=CONST.HW_MGMT_FOLDER_DEF)
     args = vars(CMD_PARSER.parse_args())
-    logger = Logger(args[CONST.LOG_USE_SYSLOG], args[CONST.LOG_FILE], args["verbosity"])
+    logger = Logger(args[CONST.LOG_USE_SYSLOG], ident=CONST.SYSLOG_IDENTIFIER, log_file=args[CONST.LOG_FILE], log_level=args["verbosity"])
     thermal_management = None
     try:
         thermal_management = ThermalManagement(args, logger)

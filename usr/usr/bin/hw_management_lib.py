@@ -19,6 +19,7 @@ import os
 import sys
 import logging
 from logging.handlers import RotatingFileHandler, SysLogHandler
+import syslog
 from threading import Timer
 import time
 
@@ -52,18 +53,7 @@ def current_milli_time():
     """
     return round(time.clock_gettime(time.CLOCK_MONOTONIC) * 1000)
 
-
-class SyslogFilter(logging.Filter):
-
-    def filter(self, record):
-        res = False
-        if record.getMessage().startswith("@syslog "):
-            record.msg = record.getMessage().replace("@syslog ", "")
-            res = True
-        return res
-
-
-class TCLogger(object):
+class HW_Mgmt_Logger(object):
     """
     Logger class provide functionality to log messages.
     It can log to several places in parallel
@@ -93,6 +83,21 @@ class TCLogger(object):
     DEBUG = logging.DEBUG
     NOTSET = logging.NOTSET
 
+    LOG_FACILITY_DAEMON = syslog.LOG_DAEMON
+    LOG_FACILITY_USER = syslog.LOG_USER
+
+    LOG_OPTION_NDELAY = syslog.LOG_NDELAY
+    LOG_OPTION_PID = syslog.LOG_PID
+
+    LOG_PRIORITY_ERROR = syslog.LOG_ERR
+    LOG_PRIORITY_WARNING = syslog.LOG_WARNING
+    LOG_PRIORITY_NOTICE = syslog.LOG_NOTICE
+    LOG_PRIORITY_INFO = syslog.LOG_INFO
+    LOG_PRIORITY_DEBUG = syslog.LOG_DEBUG
+
+    DEFAULT_LOG_FACILITY = LOG_FACILITY_USER
+    DEFAULT_LOG_OPTION = LOG_OPTION_NDELAY
+
     MAX_LOG_FILE_SIZE = 10 * 1024 * 1024
     MAX_LOG_FILE_BACKUP_COUNT = 3
 
@@ -100,12 +105,13 @@ class TCLogger(object):
     MAX_MSG_TIMEOUT_HASH_SIZE = 50
     MSG_HASH_TIMEOUT = 60 * 60 * 1000
 
-    def __init__(self, use_syslog=False, log_file=None, tc_log_level=INFO, syslog_level=NOTICE):
+    def __init__(self, use_syslog=False, ident=None, log_file=None, log_level=INFO, syslog_level=NOTICE):
         """
         @summary:
             The following class provide functionality to log messages.
         @param use_syslog: log also to syslog. Applicable arg
             value 1-enable/0-disable
+        @param ident: log identifier
         @param log_file: log to user specified file. Set '' if no log needed
         """
         logging.basicConfig(level=self.DEBUG)
@@ -119,9 +125,16 @@ class TCLogger(object):
         self.logger_emit = True
         self.syslog_hash = {}    # hash array of the messages which was logged to syslog
 
-        self.set_param(use_syslog, log_file, tc_log_level, syslog_level)
+        self.set_param(use_syslog, ident, log_file, log_level, syslog_level)
         for level in ("debug", "info", "notice", "warn", "error", "critical"):
             setattr(self, level, self._make_log_level(level))
+
+    def __del__(self):
+        """
+        @summary:
+            Cleanup and stop logger
+        """      
+        self.stop()
 
     def _make_log_level(self, level):
         level_map = {
@@ -129,6 +142,7 @@ class TCLogger(object):
             "info": self.INFO,
             "notice": self.NOTICE,
             "warn": self.WARNING,
+            "warning": self.WARNING,
             "error": self.ERROR,
             "critical": self.CRITICAL,
         }
@@ -137,13 +151,35 @@ class TCLogger(object):
             self.log_handler(level_map[level], msg, id, repeat)
         return log_method
 
-    def set_param(self, use_syslog=None, log_file=None, tc_log_level=INFO, syslog_level=NOTICE):
+    def init_syslog(self, log_identifier=None, log_facility=DEFAULT_LOG_FACILITY, log_option=DEFAULT_LOG_OPTION, syslog_level=NOTICE):
+        """
+        @summary:
+            Initialize syslog
+        @param log_identifier: log identifier
+        @param log_facility: log facility
+        @param log_option: log option
+        @param syslog_level: syslog level
+        """
+
+        self._syslog = syslog
+
+        if log_identifier is None:
+            log_identifier = os.path.basename(sys.argv[0])
+
+        # Initialize syslog
+        self._syslog.openlog(ident=log_identifier, logoption=log_option, facility=log_facility)
+
+        # Set the default minimum log priority to LOG_PRIORITY_NOTICE
+        self._syslog_min_log_priority = syslog_level
+
+    def set_param(self, use_syslog=None, ident=None, log_file=None, log_level=INFO, syslog_level=NOTICE):
         """
         @summary:
             Set logger parameters. Can be called any time
             log provided by /lib/lsb/init-functions always turned on
         @param use_syslog: log also to syslog. Applicable arg
             value 1-enable/0-disable
+        @param ident: log identifier
         @param log_file: log to user specified file. Set None if no log needed
         """
         if log_file and not isinstance(log_file, str):
@@ -165,27 +201,21 @@ class TCLogger(object):
                                                      backupCount=self.MAX_LOG_FILE_BACKUP_COUNT)
 
             self.logger_fh.setFormatter(formatter)
-            self.logger_fh.setLevel(tc_log_level)
+            self.logger_fh.setLevel(log_level)
             self.logger.addHandler(self.logger_fh)
 
         if use_syslog:
-            if sys.platform == "darwin":
-                address = "/var/run/syslog"
-            else:
-                if os.path.exists("/dev/log"):
-                    address = "/dev/log"
-                else:
-                    address = ("localhost", 514)
-            facility = SysLogHandler.LOG_SYSLOG
-            try:
-                syslog_handler = SysLogHandler(address=address, facility=facility)
-                syslog_handler.setLevel(syslog_level)
+            self.init_syslog(log_identifier=ident, syslog_level=syslog_level)
 
-                syslog_handler.setFormatter(logging.Formatter("hw-management-tc: %(levelname)s - %(message)s"))
-                syslog_handler.addFilter(SyslogFilter("syslog"))
-                self.logger.addHandler(syslog_handler)
-            except IOError as err:
-                print("Can't init syslog {} address {}".format(str(err), address))
+    def syslog_log(self, level, msg):
+        """
+        @summary:
+            Log message to syslog
+        @param level: log level
+        @param msg: message
+        """
+        if level >= self._syslog_min_log_priority:
+            self._syslog.syslog(level, msg)
 
     def stop(self):
         """
@@ -199,8 +229,9 @@ class TCLogger(object):
             self.logger.removeHandler(handler)
         self.logger_emit = False
         self.syslog_hash = {}
+        self._syslog.closelog()  # Close syslog
 
-    def close_tc_log_handler(self):
+    def close_log_handler(self):
         if self.logger_fh:
             self.logger_fh.flush()
             self.logger_fh.close()
@@ -218,8 +249,8 @@ class TCLogger(object):
     def log_handler(self, level, msg="", id=None, repeat=0):
         """
         @summary:
-            Logs message to both tc_log and syslog.
-                1. The message is always logged to tc_log.
+            Logs message to both log and syslog.
+                1. The message is always logged to log.
                 2. Repeated messages can be "collapsed" in syslog:
                 - When a repeated message is detected, it will shown only "repeat" times.
                 - When the condition clears, a final message with a "clear" marker is logged.
@@ -245,9 +276,10 @@ class TCLogger(object):
                 return
             self.logger_emit = False
 
-            msg_prefix = "@syslog " if syslog_emit else ""
             try:
-                self.logger.log(level, msg_prefix + msg)
+                self.logger.log(level, msg)
+                if syslog_emit:
+                    self.syslog_log(level, msg)
             except (IOError, OSError, ValueError) as e:
                 print ("Error logging message: {} {}".format(msg, e))
                 pass
@@ -311,9 +343,6 @@ class TCLogger(object):
 
                 self.syslog_hash[id_hash]["ts"] = current_milli_time()
 
-                if self.syslog_hash[id_hash]["count"] > 1:
-                    msg = msg + " (repeated {} times)".format(self.syslog_hash[id_hash]["count"])
-
                 if self.syslog_hash[id_hash]["count"] > repeat:
                     syslog_emit = False
         else:
@@ -323,8 +352,8 @@ class TCLogger(object):
                 if not msg:
                     msg = self.syslog_hash[id_hash]["msg"]
                     # add "finalization" mark to message
-                    if self.syslog_hash[id_hash]["count"]:
-                        msg = msg + " (clear)"
+                    if self.syslog_hash[id_hash]["count"] > 1:
+                        msg = "message repeated {} times: [ {} ] and stopped".format(self.syslog_hash[id_hash]["count"], msg)
 
                 # remove message from hash
                 del self.syslog_hash[id_hash]
