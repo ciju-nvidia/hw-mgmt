@@ -214,8 +214,17 @@ class HW_Mgmt_Logger(object):
         @param level: log level
         @param msg: message
         """
+        level_str_map = {
+            self.DEBUG: "DBG",
+            self.INFO: "INFO",
+            self.NOTICE: "NOTICE",
+            self.WARNING: "WARNING",
+            self.ERROR: "ERR",
+            self.CRITICAL: "CRIT",
+        }
+        level_str = level_str_map[level]
         if level >= self._syslog_min_log_priority:
-            self._syslog.syslog(level, msg)
+            self._syslog.syslog(level, "{}: {}".format(level_str, msg))
 
     def stop(self):
         """
@@ -339,7 +348,7 @@ class HW_Mgmt_Logger(object):
                     self.syslog_hash[id_hash]["msg"] = msg
                 else:
                     self.syslog_hash_garbage_collect()
-                    self.syslog_hash[id_hash] = {"count": 1, "msg": msg, "ts": current_milli_time()}
+                    self.syslog_hash[id_hash] = {"count": 1, "msg": msg, "ts": current_milli_time(), "repeat": repeat}
 
                 self.syslog_hash[id_hash]["ts"] = current_milli_time()
 
@@ -352,12 +361,11 @@ class HW_Mgmt_Logger(object):
                 if not msg:
                     msg = self.syslog_hash[id_hash]["msg"]
                     # add "finalization" mark to message
-                    if self.syslog_hash[id_hash]["count"] > 1:
-                        msg = "message repeated {} times: [ {} ] and stopped".format(self.syslog_hash[id_hash]["count"], msg)
-
+                    msg = "message repeated {} times: [ {} ] and stopped".format(self.syslog_hash[id_hash]["count"], msg)
+                syslog_emit = True
                 # remove message from hash
                 del self.syslog_hash[id_hash]
-                syslog_emit = True
+
         return msg, syslog_emit
 
 

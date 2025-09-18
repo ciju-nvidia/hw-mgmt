@@ -2887,7 +2887,7 @@ class ThermalManagement(hw_management_file_op):
             if not self.write_pwm(pwm, validate=True):
                 self.log.warn("PWM write validation mismatch set:{} get:{}".format(pwm, self.read_pwm()),
                               id="PWM write validation mismatch",
-                              repeat=1)
+                              repeat=3)
             else:
                 self.log.notice(None, id="PWM write validation mismatch")
             return
@@ -2936,7 +2936,7 @@ class ThermalManagement(hw_management_file_op):
                 self.log.notice(None, id="Read PWM error")
 
             if pwm_real != self.pwm:
-                self.log.warn("Unexpected pwm1 value {}. Force set to {}".format(pwm_real, self.pwm), id="Unexpected pwm value2", repeat=1)
+                self.log.warn("Unexpected pwm value {}. Force set to {}".format(pwm_real, self.pwm), id="Unexpected pwm value2", repeat=1)
                 self._update_chassis_fan_speed(self.pwm, True)
             else:
                 self.log.notice(None, id="Unexpected pwm value2")
@@ -3072,7 +3072,7 @@ class ThermalManagement(hw_management_file_op):
                     tacho_cnt = self.read_file("config/max_tachos")
                     ret = bool(int(tacho_cnt))
                 except  (ValueError, IOError, OSError):
-                    self.log.notice("Can't read config/max_tachos. None-numeric value: {}".format(tacho_cnt), repeat=1)
+                    self.log.warn("Can't read config/max_tachos. None-numeric value: {}".format(tacho_cnt), repeat=1)
                     ret = False
         return ret
 
@@ -3550,7 +3550,7 @@ class ThermalManagement(hw_management_file_op):
                 continue
 
             if self._is_attention_fan_insertion_fail():
-                self.log.info("Attention fan insertion failed, trying to recover", repeat=1)
+                self.log.notice("Attention fan insertion failed, trying to recover", repeat=1)
                 self._attention_fan_insertion_recovery()
                 continue
 
